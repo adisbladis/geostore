@@ -6,11 +6,7 @@ import boto3
 from jsonschema import ValidationError, validate
 from linz_logger import get_log
 
-from ..aws_message_attributes import (
-    DATA_TYPE_STRING,
-    MESSAGE_ATTRIBUTE_TYPE_DATASET,
-    MESSAGE_ATTRIBUTE_TYPE_KEY,
-)
+from ..aws_message_attributes import DATA_TYPE_STRING, MESSAGE_ATTRIBUTE_TYPE_KEY
 from ..error_response_keys import ERROR_MESSAGE_KEY
 from ..logging_keys import LOG_MESSAGE_LAMBDA_FAILURE, LOG_MESSAGE_LAMBDA_START
 from ..parameter_store import ParameterName, get_param
@@ -61,19 +57,18 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
         LOGGER.warning(LOG_MESSAGE_LAMBDA_FAILURE, error=error)
         return {ERROR_MESSAGE_KEY: error.message}
 
-    new_version_metadata_key = (
-        f"{event[DATASET_PREFIX_KEY]}/{event[VERSION_ID_KEY]}/"
-        f"{basename(urlparse(event[METADATA_URL_KEY]).path[1:])}"
+    dataset_key = (
+        f"{event[DATASET_PREFIX_KEY]}/{basename(urlparse(event[METADATA_URL_KEY]).path[1:])}"
     )
 
     # add reference to root catalog
     SQS_RESOURCE.get_queue_by_name(
         QueueName=get_param(ParameterName.UPDATE_CATALOG_MESSAGE_QUEUE_NAME)
     ).send_message(
-        MessageBody=new_version_metadata_key,
+        MessageBody=dataset_key,
         MessageAttributes={
             MESSAGE_ATTRIBUTE_TYPE_KEY: MessageAttributeValueTypeDef(
-                DataType=DATA_TYPE_STRING, StringValue=MESSAGE_ATTRIBUTE_TYPE_DATASET
+                DataType=DATA_TYPE_STRING, StringValue="test"  # MESSAGE_ATTRIBUTE_TYPE_ROOT
             )
         },
     )
@@ -81,5 +76,5 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
     return {
         NEW_VERSION_S3_LOCATION: f"{S3_URL_PREFIX}"
         f"{Resource.STORAGE_BUCKET_NAME.resource_name}/"
-        f"{new_version_metadata_key}"
+        f"{dataset_key}"
     }

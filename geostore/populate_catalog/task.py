@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING
 
 import boto3
 from linz_logger import get_log
-from pystac import read_file
 from pystac.catalog import Catalog, CatalogType
 from pystac.collection import Collection
 from pystac.item import Item
@@ -13,7 +12,6 @@ from pystac.stac_io import StacIO
 from ..api_keys import EVENT_KEY
 from ..aws_keys import BODY_KEY
 from ..aws_message_attributes import (
-    MESSAGE_ATTRIBUTE_TYPE_DATASET,
     MESSAGE_ATTRIBUTE_TYPE_KEY,
     MESSAGE_ATTRIBUTE_TYPE_ROOT,
     STRING_VALUE_KEY_LOWER,
@@ -61,11 +59,6 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
             == MESSAGE_ATTRIBUTE_TYPE_ROOT
         ):
             handle_root(message[BODY_KEY])
-        elif (
-            message[MESSAGE_ATTRIBUTES_KEY][MESSAGE_ATTRIBUTE_TYPE_KEY][STRING_VALUE_KEY_LOWER]
-            == MESSAGE_ATTRIBUTE_TYPE_DATASET
-        ):
-            handle_dataset(message[BODY_KEY])
         else:
             raise UnhandledSQSMessageException("Unhandled SQS message type")
 
@@ -86,24 +79,6 @@ class GeostoreSTACLayoutStrategy(HrefLayoutStrategy):
 
     def get_item_href(self, item: Item, parent_dir: str) -> str:
         return str(item.get_self_href())
-
-
-def handle_dataset(version_metadata_key: str) -> None:
-    """Handle writing a new dataset version to the dataset catalog"""
-    storage_bucket_path = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}"
-    dataset_prefix = version_metadata_key.split("/", maxsplit=1)[0]
-    dataset_catalog = Catalog.from_file(
-        f"{storage_bucket_path}/{dataset_prefix}/{CATALOG_FILENAME}"
-    )
-
-    dataset_version_metadata = read_file(f"{storage_bucket_path}/{version_metadata_key}")
-    assert isinstance(dataset_version_metadata, (Catalog, Collection))
-    dataset_catalog.add_child(child=dataset_version_metadata, strategy=GeostoreSTACLayoutStrategy())
-
-    dataset_catalog.normalize_hrefs(
-        f"{storage_bucket_path}/{dataset_prefix}", strategy=GeostoreSTACLayoutStrategy()
-    )
-    dataset_catalog.save(catalog_type=CatalogType.SELF_CONTAINED)
 
 
 def handle_root(dataset_prefix: str) -> None:
