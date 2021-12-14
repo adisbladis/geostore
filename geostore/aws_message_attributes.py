@@ -7,8 +7,6 @@ def decapitalize(key: str) -> str:
     return f"{key[:1].lower()}{key[1:]}"
 
 
-MESSAGE_ATTRIBUTE_TYPE_KEY = "type"
-MESSAGE_ATTRIBUTE_TYPE_ROOT = "root"
 DATA_TYPE_KEY = "DataType"
 DATA_TYPE_STRING = "String"
 STRING_VALUE_KEY = "StringValue"

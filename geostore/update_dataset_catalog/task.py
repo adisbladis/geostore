@@ -6,7 +6,6 @@ import boto3
 from jsonschema import ValidationError, validate
 from linz_logger import get_log
 
-from ..aws_message_attributes import DATA_TYPE_STRING, MESSAGE_ATTRIBUTE_TYPE_KEY
 from ..error_response_keys import ERROR_MESSAGE_KEY
 from ..logging_keys import LOG_MESSAGE_LAMBDA_FAILURE, LOG_MESSAGE_LAMBDA_START
 from ..parameter_store import ParameterName, get_param
@@ -66,11 +65,6 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
         QueueName=get_param(ParameterName.UPDATE_CATALOG_MESSAGE_QUEUE_NAME)
     ).send_message(
         MessageBody=dataset_key,
-        MessageAttributes={
-            MESSAGE_ATTRIBUTE_TYPE_KEY: MessageAttributeValueTypeDef(
-                DataType=DATA_TYPE_STRING, StringValue="test"  # MESSAGE_ATTRIBUTE_TYPE_ROOT
-            )
-        },
     )
 
     return {

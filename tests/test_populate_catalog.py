@@ -2,27 +2,17 @@ from copy import deepcopy
 from json import load
 
 import smart_open
-from _pytest.python_api import raises
 from mypy_boto3_s3 import S3Client
 from pytest import mark
 from pytest_subtests import SubTests
 
 from geostore.aws_keys import BODY_KEY
-from geostore.aws_message_attributes import (
-    DATA_TYPE_KEY,
-    DATA_TYPE_STRING,
-    MESSAGE_ATTRIBUTE_TYPE_KEY,
-    MESSAGE_ATTRIBUTE_TYPE_ROOT,
-    STRING_VALUE_KEY_LOWER,
-)
 from geostore.populate_catalog.task import (
     CATALOG_FILENAME,
-    MESSAGE_ATTRIBUTES_KEY,
     RECORDS_KEY,
     ROOT_CATALOG_DESCRIPTION,
     ROOT_CATALOG_ID,
     ROOT_CATALOG_TITLE,
-    UnhandledSQSMessageException,
     lambda_handler,
 )
 from geostore.resources import Resource
@@ -43,7 +33,6 @@ from geostore.stac_format import (
 from geostore.types import JsonList
 from tests.aws_utils import Dataset, S3Object, any_lambda_context, delete_s3_key
 from tests.file_utils import json_dict_to_file_object
-from tests.stac_generators import any_dataset_version_id
 from tests.stac_objects import MINIMAL_VALID_STAC_CATALOG_OBJECT
 
 
@@ -60,7 +49,7 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
         ),
         bucket_name=Resource.STORAGE_BUCKET_NAME.resource_name,
         key=f"{dataset.dataset_prefix}/{CATALOG_FILENAME}",
-    ):
+    ) as new_dataset:
 
         expected_links: JsonList = [
             {
@@ -71,7 +60,7 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
             },
             {
                 STAC_REL_KEY: STAC_REL_CHILD,
-                STAC_HREF_KEY: f"./{dataset.dataset_prefix}/{CATALOG_FILENAME}",
+                STAC_HREF_KEY: f"./{new_dataset.key}",
                 STAC_TITLE_KEY: dataset.title,
                 STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
             },
@@ -82,13 +71,7 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
                 {
                     RECORDS_KEY: [
                         {
-                            BODY_KEY: dataset.dataset_prefix,
-                            MESSAGE_ATTRIBUTES_KEY: {
-                                MESSAGE_ATTRIBUTE_TYPE_KEY: {
-                                    STRING_VALUE_KEY_LOWER: MESSAGE_ATTRIBUTE_TYPE_ROOT,
-                                    DATA_TYPE_KEY: DATA_TYPE_STRING,
-                                }
-                            },
+                            BODY_KEY: new_dataset.key,
                         }
                     ]
                 },
@@ -154,7 +137,7 @@ def should_update_existing_root_catalog(subtests: SubTests) -> None:
             ),
             bucket_name=Resource.STORAGE_BUCKET_NAME.resource_name,
             key=f"{dataset.dataset_prefix}/{CATALOG_FILENAME}",
-        ), S3Object(
+        ) as new_dataset_metadata, S3Object(
             file_object=json_dict_to_file_object(
                 {
                     **deepcopy(MINIMAL_VALID_STAC_CATALOG_OBJECT),
@@ -171,7 +154,7 @@ def should_update_existing_root_catalog(subtests: SubTests) -> None:
             expected_root_links: JsonList = original_links + [
                 {
                     STAC_REL_KEY: STAC_REL_CHILD,
-                    STAC_HREF_KEY: f"./{dataset.dataset_prefix}/{CATALOG_FILENAME}",
+                    STAC_HREF_KEY: f"./{new_dataset_metadata.key}",
                     STAC_TITLE_KEY: dataset.title,
                     STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
                 }
@@ -196,13 +179,7 @@ def should_update_existing_root_catalog(subtests: SubTests) -> None:
                 {
                     RECORDS_KEY: [
                         {
-                            BODY_KEY: dataset.dataset_prefix,
-                            MESSAGE_ATTRIBUTES_KEY: {
-                                MESSAGE_ATTRIBUTE_TYPE_KEY: {
-                                    STRING_VALUE_KEY_LOWER: MESSAGE_ATTRIBUTE_TYPE_ROOT,
-                                    DATA_TYPE_KEY: DATA_TYPE_STRING,
-                                }
-                            },
+                            BODY_KEY: new_dataset_metadata.key,
                         }
                     ]
                 },
@@ -218,28 +195,8 @@ def should_update_existing_root_catalog(subtests: SubTests) -> None:
 
             with smart_open.open(
                 f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}"
-                f"/{dataset.dataset_prefix}/{CATALOG_FILENAME}",
+                f"/{new_dataset_metadata.key}",
                 mode="rb",
             ) as dataset_metadata_file, subtests.test(msg="dataset catalog links"):
                 dataset_catalog_json = load(dataset_metadata_file)
                 assert dataset_catalog_json[STAC_LINKS_KEY] == expected_dataset_links
-
-
-def should_fail_if_unknown_sqs_message_type() -> None:
-    with raises(UnhandledSQSMessageException):
-        lambda_handler(
-            {
-                RECORDS_KEY: [
-                    {
-                        BODY_KEY: any_dataset_version_id(),
-                        MESSAGE_ATTRIBUTES_KEY: {
-                            MESSAGE_ATTRIBUTE_TYPE_KEY: {
-                                STRING_VALUE_KEY_LOWER: "test",
-                                DATA_TYPE_KEY: DATA_TYPE_STRING,
-                            }
-                        },
-                    }
-                ]
-            },
-            any_lambda_context(),
-        )

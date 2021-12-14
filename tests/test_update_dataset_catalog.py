@@ -5,13 +5,6 @@ from jsonschema import ValidationError
 from pytest import mark
 from pytest_subtests import SubTests
 
-from geostore.aws_message_attributes import (
-    DATA_TYPE_KEY,
-    DATA_TYPE_STRING,
-    MESSAGE_ATTRIBUTE_TYPE_KEY,
-    MESSAGE_ATTRIBUTE_TYPE_ROOT,
-    STRING_VALUE_KEY,
-)
 from geostore.error_response_keys import ERROR_MESSAGE_KEY
 from geostore.resources import Resource
 from geostore.s3 import S3_URL_PREFIX
@@ -59,12 +52,6 @@ def should_succeed_and_trigger_sqs_update_to_catalog(subtests: SubTests) -> None
 
         expected_sqs_call = {
             "MessageBody": dataset_metadata.key,
-            "MessageAttributes": {
-                MESSAGE_ATTRIBUTE_TYPE_KEY: {
-                    STRING_VALUE_KEY: MESSAGE_ATTRIBUTE_TYPE_ROOT,
-                    DATA_TYPE_KEY: DATA_TYPE_STRING,
-                }
-            },
         }
 
         with subtests.test(msg="success"):

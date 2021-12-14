@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 import boto3
 from linz_logger import get_log
+from pystac import read_file
 from pystac.catalog import Catalog, CatalogType
 from pystac.collection import Collection
 from pystac.item import Item
@@ -11,11 +12,6 @@ from pystac.stac_io import StacIO
 
 from ..api_keys import EVENT_KEY
 from ..aws_keys import BODY_KEY
-from ..aws_message_attributes import (
-    MESSAGE_ATTRIBUTE_TYPE_KEY,
-    MESSAGE_ATTRIBUTE_TYPE_ROOT,
-    STRING_VALUE_KEY_LOWER,
-)
 from ..boto3_config import CONFIG
 from ..pystac_io_methods import S3StacIO
 from ..resources import Resource
@@ -54,13 +50,7 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
     LOGGER.debug(dumps({EVENT_KEY: event}))
 
     for message in event[RECORDS_KEY]:
-        if (
-            message[MESSAGE_ATTRIBUTES_KEY][MESSAGE_ATTRIBUTE_TYPE_KEY][STRING_VALUE_KEY_LOWER]
-            == MESSAGE_ATTRIBUTE_TYPE_ROOT
-        ):
-            handle_root(message[BODY_KEY])
-        else:
-            raise UnhandledSQSMessageException("Unhandled SQS message type")
+        handle_dataset(message[BODY_KEY])
 
     return {}
 
@@ -81,8 +71,8 @@ class GeostoreSTACLayoutStrategy(HrefLayoutStrategy):
         return str(item.get_self_href())
 
 
-def handle_root(dataset_prefix: str) -> None:
-    """Handle writing a new dataset to the root catalog"""
+def handle_dataset(dataset_metadata_key: str) -> None:
+    """Handle writing a new dataset version to the dataset catalog"""
     results = S3_CLIENT.list_objects(
         Bucket=Resource.STORAGE_BUCKET_NAME.resource_name, Prefix=CATALOG_FILENAME
     )
@@ -104,13 +94,13 @@ def handle_root(dataset_prefix: str) -> None:
             f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/{CATALOG_FILENAME}"
         )
 
-    dataset_path = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/{dataset_prefix}"
-    dataset_catalog = Catalog.from_file(f"{dataset_path}/{CATALOG_FILENAME}")
+    storage_bucket_path = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}"
+    dataset_metadata = read_file(f"{storage_bucket_path}/{dataset_metadata_key}")
+    assert isinstance(dataset_metadata, (Catalog, Collection))
 
-    root_catalog.add_child(dataset_catalog, strategy=GeostoreSTACLayoutStrategy())
+    root_catalog.add_child(dataset_metadata, strategy=GeostoreSTACLayoutStrategy())
     root_catalog.normalize_hrefs(
         f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}",
         strategy=GeostoreSTACLayoutStrategy(),
     )
-
     root_catalog.save(catalog_type=CatalogType.SELF_CONTAINED)
