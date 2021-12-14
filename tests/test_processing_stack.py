@@ -17,8 +17,8 @@ from pytest_subtests import SubTests
 
 from geostore.api_keys import STATUS_KEY
 from geostore.aws_keys import BODY_KEY, HTTP_METHOD_KEY, STATUS_CODE_KEY
-from geostore.dataset_properties import DATASET_KEY_SEPARATOR
 from geostore.parameter_store import ParameterName
+from geostore.populate_catalog.task import CATALOG_FILENAME
 from geostore.resources import Resource
 from geostore.s3 import S3_URL_PREFIX
 from geostore.stac_format import (
@@ -29,6 +29,7 @@ from geostore.stac_format import (
     STAC_HREF_KEY,
     STAC_LINKS_KEY,
     STAC_REL_CHILD,
+    STAC_REL_ITEM,
     STAC_REL_KEY,
     STAC_REL_ROOT,
     STAC_REL_SELF,
@@ -58,6 +59,7 @@ from .aws_utils import (
     delete_s3_key,
     get_s3_role_arn,
     wait_for_copy_jobs,
+    wait_for_s3_key,
 )
 from .file_utils import json_dict_to_file_object
 from .general_generators import (
@@ -184,7 +186,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                     },
                 },
                 STAC_LINKS_KEY: [
-                    {STAC_HREF_KEY: item_metadata_url, STAC_REL_KEY: STAC_REL_CHILD},
+                    {STAC_HREF_KEY: item_metadata_url, STAC_REL_KEY: STAC_REL_ITEM},
                     {STAC_HREF_KEY: catalog_metadata_url, STAC_REL_KEY: STAC_REL_ROOT},
                     {STAC_HREF_KEY: collection_metadata_url, STAC_REL_KEY: STAC_REL_SELF},
                 ],
@@ -258,11 +260,10 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 import_dataset_response, account_id, s3_control_client, subtests
             )
 
-            dataset_prefix = f"{dataset.title}{DATASET_KEY_SEPARATOR}{dataset.dataset_id}/"
             storage_bucket_prefix = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
 
             # Catalog contents
-            imported_catalog_key = f"{dataset_prefix}{catalog_metadata_filename}"
+            imported_catalog_key = f"{dataset.dataset_prefix}/{catalog_metadata_filename}"
             with subtests.test(msg="Imported catalog has relative keys"), smart_open.open(
                 f"{storage_bucket_prefix}{imported_catalog_key}", mode="rb"
             ) as imported_catalog_file:
@@ -285,7 +286,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 } == load(imported_catalog_file)
 
             # Collection contents
-            imported_collection_key = f"{dataset_prefix}{collection_metadata_filename}"
+            imported_collection_key = f"{dataset.dataset_prefix}/{collection_metadata_filename}"
             with subtests.test(msg="Imported collection has relative keys"), smart_open.open(
                 f"{storage_bucket_prefix}{imported_collection_key}", mode="rb"
             ) as imported_collection_file:
@@ -316,7 +317,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 } == load(imported_collection_file)
 
             # Item contents
-            imported_item_key = f"{dataset_prefix}{item_metadata_filename}"
+            imported_item_key = f"{dataset.dataset_prefix}/{item_metadata_filename}"
             with subtests.test(msg="Imported item has relative keys"), smart_open.open(
                 f"{storage_bucket_prefix}{imported_item_key}", mode="rb"
             ) as imported_item_file:
@@ -337,26 +338,29 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 } == load(imported_item_file)
 
             # First asset contents
-            imported_first_asset_key = f"{dataset_prefix}{first_asset_filename}"
+            imported_first_asset_key = f"{dataset.dataset_prefix}/{first_asset_filename}"
             with subtests.test(msg="Verify first asset contents"), smart_open.open(
                 f"{storage_bucket_prefix}{imported_first_asset_key}", mode="rb"
             ) as imported_first_asset_file:
                 assert first_asset_contents == imported_first_asset_file.read()
 
             # Second asset contents
-            imported_second_asset_key = f"{dataset_prefix}{second_asset_filename}"
+            imported_second_asset_key = f"{dataset.dataset_prefix}/{second_asset_filename}"
             with subtests.test(msg="Verify second asset contents"), smart_open.open(
                 f"{storage_bucket_prefix}{imported_second_asset_key}", mode="rb"
             ) as imported_second_asset_file:
                 assert second_asset_contents == imported_second_asset_file.read()
         finally:
             # Cleanup
+            wait_for_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client)
+
             for key in [
                 imported_catalog_key,
                 imported_collection_key,
                 imported_item_key,
                 imported_first_asset_key,
                 imported_second_asset_key,
+                CATALOG_FILENAME,
             ]:
                 with subtests.test(msg=f"Delete {key}"):
                     delete_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, key, s3_client)
@@ -499,9 +503,11 @@ def should_successfully_run_dataset_version_creation_process_with_single_asset(
             )
         finally:
             # Cleanup
-            dataset_prefix = f"{dataset.title}{DATASET_KEY_SEPARATOR}{dataset.dataset_id}"
+            wait_for_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client)
+            delete_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client)
+
             for filename in [root_metadata_filename, child_metadata_filename, asset_filename]:
-                new_key = f"{dataset_prefix}/{filename}"
+                new_key = f"{dataset.dataset_prefix}/{filename}"
                 with subtests.test(msg=f"Delete {new_key}"):
                     delete_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, new_key, s3_client)
 
@@ -613,11 +619,10 @@ def should_not_copy_files_when_there_is_a_checksum_mismatch(
             assert execution["status"] == "SUCCEEDED", execution
 
     # Then the files should not be copied
-    dataset_prefix = f"{dataset.title}{DATASET_KEY_SEPARATOR}{dataset.dataset_id}"
     for filename in [metadata_filename, asset_filename]:
         with subtests.test(msg=filename), raises(AssertionError):
             delete_s3_key(
                 Resource.STORAGE_BUCKET_NAME.resource_name,
-                f"{dataset_prefix}/{filename}",
+                f"{dataset.dataset_prefix}/{filename}",
                 s3_client,
             )

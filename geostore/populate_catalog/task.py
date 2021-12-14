@@ -37,7 +37,6 @@ ROOT_CATALOG_DESCRIPTION = (
 CATALOG_FILENAME = "catalog.json"
 CONTENTS_KEY = "Contents"
 RECORDS_KEY = "Records"
-MESSAGE_ATTRIBUTES_KEY = "messageAttributes"
 
 LOGGER = get_log()
 
@@ -53,10 +52,6 @@ def lambda_handler(event: JsonObject, _context: bytes) -> JsonObject:
         handle_dataset(message[BODY_KEY])
 
     return {}
-
-
-class UnhandledSQSMessageException(Exception):
-    pass
 
 
 class GeostoreSTACLayoutStrategy(HrefLayoutStrategy):
