@@ -94,6 +94,7 @@ def handle_dataset(dataset_metadata_key: str) -> None:
     assert isinstance(dataset_metadata, (Catalog, Collection))
 
     root_catalog.add_child(dataset_metadata, strategy=GeostoreSTACLayoutStrategy())
+    root_catalog.make_all_asset_hrefs_relative()
     root_catalog.normalize_hrefs(
         f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}",
         strategy=GeostoreSTACLayoutStrategy(),

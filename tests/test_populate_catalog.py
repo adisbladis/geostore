@@ -39,7 +39,7 @@ from geostore.stac_format import (
     STAC_TYPE_KEY,
 )
 from geostore.types import JsonList
-from tests.aws_utils import Dataset, S3Object, any_lambda_context, delete_s3_key, wait_for_s3_key
+from tests.aws_utils import Dataset, S3Object, any_lambda_context, delete_s3_key
 from tests.file_utils import json_dict_to_file_object
 from tests.general_generators import any_file_contents, any_past_datetime_string, any_safe_filename
 from tests.stac_generators import any_asset_name, any_dataset_title, sha256_hex_digest_to_multihash
@@ -53,6 +53,7 @@ from tests.stac_objects import (
 @mark.infrastructure
 def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client: S3Client) -> None:
     # pylint: disable=too-many-locals
+    # pylint: disable=too-many-statements
 
     with Dataset() as dataset:
         collection_metadata_filename = any_safe_filename()
@@ -128,7 +129,7 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
             ),
             bucket_name=Resource.STORAGE_BUCKET_NAME.resource_name,
             key=f"{dataset.dataset_prefix}/{collection_metadata_filename}",
-        ), S3Object(
+        ) as collection_metadata_file, S3Object(
             file_object=json_dict_to_file_object(
                 {
                     **deepcopy(MINIMAL_VALID_STAC_ITEM_OBJECT),
@@ -148,42 +149,7 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
             ),
             bucket_name=Resource.STORAGE_BUCKET_NAME.resource_name,
             key=f"{dataset.dataset_prefix}/{item_metadata_filename}",
-        ):
-
-            expected_root_links: JsonList = [
-                {
-                    STAC_REL_KEY: STAC_REL_ROOT,
-                    STAC_HREF_KEY: f"./{CATALOG_FILENAME}",
-                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
-                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
-                },
-                {
-                    STAC_REL_KEY: STAC_REL_CHILD,
-                    STAC_HREF_KEY: f"./{catalog_metadata_file.key}",
-                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
-                    STAC_TITLE_KEY: dataset.title,
-                },
-            ]
-
-            expected_dataset_links: JsonList = [
-                {
-                    STAC_REL_KEY: STAC_REL_CHILD,
-                    STAC_HREF_KEY: f"./{collection_metadata_filename}",
-                    STAC_TITLE_KEY: collection_title,
-                },
-                {
-                    STAC_REL_KEY: STAC_REL_ROOT,
-                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
-                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
-                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
-                },
-                {
-                    STAC_REL_KEY: STAC_REL_PARENT,
-                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
-                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
-                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
-                },
-            ]
+        ) as item_metadata_file:
 
             try:
                 lambda_handler(
@@ -211,7 +177,20 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
                         assert catalog_json[STAC_DESCRIPTION_KEY] == ROOT_CATALOG_DESCRIPTION
 
                     with subtests.test(msg="root catalog links"):
-                        assert catalog_json[STAC_LINKS_KEY] == expected_root_links
+                        assert catalog_json[STAC_LINKS_KEY] == [
+                            {
+                                STAC_REL_KEY: STAC_REL_ROOT,
+                                STAC_HREF_KEY: f"./{CATALOG_FILENAME}",
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                                STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                            },
+                            {
+                                STAC_REL_KEY: STAC_REL_CHILD,
+                                STAC_HREF_KEY: f"./{catalog_metadata_file.key}",
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                                STAC_TITLE_KEY: dataset.title,
+                            },
+                        ]
 
                 with smart_open.open(
                     f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
@@ -224,12 +203,101 @@ def should_create_new_root_catalog_if_doesnt_exist(subtests: SubTests, s3_client
                         assert dataset_json[STAC_TITLE_KEY] == dataset.title
 
                     with subtests.test(msg="catalog links"):
-                        assert dataset_json[STAC_LINKS_KEY] == expected_dataset_links
+                        assert dataset_json[STAC_LINKS_KEY] == [
+                            {
+                                STAC_REL_KEY: STAC_REL_CHILD,
+                                STAC_HREF_KEY: f"./{collection_metadata_filename}",
+                                STAC_TITLE_KEY: collection_title,
+                            },
+                            {
+                                STAC_REL_KEY: STAC_REL_ROOT,
+                                STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                                STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                            },
+                            {
+                                STAC_REL_KEY: STAC_REL_PARENT,
+                                STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                                STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                            },
+                        ]
+
+                with smart_open.open(
+                    f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+                    f"{collection_metadata_file.key}",
+                    mode="rb",
+                ) as collection:
+                    collection_json = load(collection)
+
+                    with subtests.test(msg="collection title"):
+                        assert collection_json[STAC_TITLE_KEY] == collection_title
+
+                    with subtests.test(msg="collection links"):
+                        assert collection_json[STAC_LINKS_KEY] == [
+                            {
+                                STAC_HREF_KEY: f"./{item_metadata_filename}",
+                                STAC_REL_KEY: STAC_REL_ITEM,
+                            },
+                            {
+                                STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                                STAC_REL_KEY: STAC_REL_ROOT,
+                                STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                            },
+                            {
+                                STAC_REL_KEY: STAC_REL_PARENT,
+                                STAC_HREF_KEY: f"./{catalog_metadata_filename}",
+                                STAC_TITLE_KEY: dataset.title,
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                            },
+                        ]
+
+                    with subtests.test(msg="collection assets"):
+                        assert collection_json[STAC_ASSETS_KEY] == {
+                            second_asset_name: {
+                                LINZ_STAC_CREATED_KEY: second_asset_created,
+                                LINZ_STAC_UPDATED_KEY: second_asset_updated,
+                                STAC_HREF_KEY: f"./{second_asset_filename}",
+                                STAC_FILE_CHECKSUM_KEY: second_asset_hex_digest,
+                            }
+                        }
+
+                with smart_open.open(
+                    f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+                    f"{item_metadata_file.key}",
+                    mode="rb",
+                ) as item:
+                    item_json = load(item)
+
+                    with subtests.test(msg="item links"):
+                        assert item_json[STAC_LINKS_KEY] == [
+                            {
+                                STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                                STAC_REL_KEY: STAC_REL_ROOT,
+                                STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                            },
+                            {
+                                STAC_HREF_KEY: f"./{collection_metadata_filename}",
+                                STAC_REL_KEY: STAC_REL_PARENT,
+                                STAC_TITLE_KEY: collection_title,
+                                STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                            },
+                        ]
+
+                    with subtests.test(msg="item assets"):
+                        assert item_json[STAC_ASSETS_KEY] == {
+                            first_asset_name: {
+                                LINZ_STAC_CREATED_KEY: first_asset_created,
+                                LINZ_STAC_UPDATED_KEY: first_asset_updated,
+                                STAC_HREF_KEY: f"./{first_asset_filename}",
+                                STAC_FILE_CHECKSUM_KEY: first_asset_hex_digest,
+                            }
+                        }
 
             finally:
-                wait_for_s3_key(
-                    Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client
-                )
+
                 delete_s3_key(
                     Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client
                 )

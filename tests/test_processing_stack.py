@@ -18,7 +18,7 @@ from pytest_subtests import SubTests
 from geostore.api_keys import STATUS_KEY
 from geostore.aws_keys import BODY_KEY, HTTP_METHOD_KEY, STATUS_CODE_KEY
 from geostore.parameter_store import ParameterName
-from geostore.populate_catalog.task import CATALOG_FILENAME
+from geostore.populate_catalog.task import CATALOG_FILENAME, ROOT_CATALOG_TITLE
 from geostore.resources import Resource
 from geostore.s3 import S3_URL_PREFIX
 from geostore.stac_format import (
@@ -28,11 +28,15 @@ from geostore.stac_format import (
     STAC_FILE_CHECKSUM_KEY,
     STAC_HREF_KEY,
     STAC_LINKS_KEY,
+    STAC_MEDIA_TYPE_JSON,
     STAC_REL_CHILD,
     STAC_REL_ITEM,
     STAC_REL_KEY,
+    STAC_REL_PARENT,
     STAC_REL_ROOT,
     STAC_REL_SELF,
+    STAC_TITLE_KEY,
+    STAC_TYPE_KEY,
 )
 from geostore.step_function import Outcome
 from geostore.step_function_keys import (
@@ -68,7 +72,12 @@ from .general_generators import (
     any_safe_file_path,
     any_safe_filename,
 )
-from .stac_generators import any_asset_name, any_hex_multihash, sha256_hex_digest_to_multihash
+from .stac_generators import (
+    any_asset_name,
+    any_dataset_title,
+    any_hex_multihash,
+    sha256_hex_digest_to_multihash,
+)
 from .stac_objects import (
     MINIMAL_VALID_STAC_CATALOG_OBJECT,
     MINIMAL_VALID_STAC_COLLECTION_OBJECT,
@@ -134,6 +143,8 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
     collection_metadata_url = f"{metadata_url_prefix}/{collection_metadata_filename}"
     catalog_metadata_url = f"{metadata_url_prefix}/{catalog_metadata_filename}"
     item_metadata_url = f"{metadata_url_prefix}/{item_metadata_filename}"
+    catalog_title = any_dataset_title()
+    collection_title = any_dataset_title()
 
     first_asset_contents = any_file_contents()
     first_asset_filename = any_safe_filename()
@@ -164,6 +175,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
         file_object=json_dict_to_file_object(
             {
                 **deepcopy(MINIMAL_VALID_STAC_CATALOG_OBJECT),
+                STAC_TITLE_KEY: catalog_title,
                 STAC_LINKS_KEY: [
                     {STAC_HREF_KEY: collection_metadata_url, STAC_REL_KEY: STAC_REL_CHILD},
                     {STAC_HREF_KEY: catalog_metadata_url, STAC_REL_KEY: STAC_REL_ROOT},
@@ -177,6 +189,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
         file_object=json_dict_to_file_object(
             {
                 **deepcopy(MINIMAL_VALID_STAC_COLLECTION_OBJECT),
+                STAC_TITLE_KEY: collection_title,
                 STAC_ASSETS_KEY: {
                     second_asset_name: {
                         LINZ_STAC_CREATED_KEY: second_asset_created,
@@ -188,6 +201,7 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 STAC_LINKS_KEY: [
                     {STAC_HREF_KEY: item_metadata_url, STAC_REL_KEY: STAC_REL_ITEM},
                     {STAC_HREF_KEY: catalog_metadata_url, STAC_REL_KEY: STAC_REL_ROOT},
+                    {STAC_HREF_KEY: catalog_metadata_url, STAC_REL_KEY: STAC_REL_PARENT},
                     {STAC_HREF_KEY: collection_metadata_url, STAC_REL_KEY: STAC_REL_SELF},
                 ],
             }
@@ -259,83 +273,122 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
             metadata_copy_job_result, asset_copy_job_result = wait_for_copy_jobs(
                 import_dataset_response, account_id, s3_control_client, subtests
             )
+            wait_for_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client)
 
-            storage_bucket_prefix = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+            expected_catalog_links = [
+                {
+                    STAC_HREF_KEY: f"./{collection_metadata_filename}",
+                    STAC_REL_KEY: STAC_REL_CHILD,
+                    STAC_TITLE_KEY: collection_title,
+                },
+                {
+                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                    STAC_REL_KEY: STAC_REL_ROOT,
+                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+                {
+                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                    STAC_REL_KEY: STAC_REL_PARENT,
+                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+            ]
 
-            # Catalog contents
             imported_catalog_key = f"{dataset.dataset_prefix}/{catalog_metadata_filename}"
-            with subtests.test(msg="Imported catalog has relative keys"), smart_open.open(
-                f"{storage_bucket_prefix}{imported_catalog_key}", mode="rb"
+            with smart_open.open(
+                f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+                f"{imported_catalog_key}",
+                mode="rb",
             ) as imported_catalog_file:
-                assert {
-                    **deepcopy(MINIMAL_VALID_STAC_CATALOG_OBJECT),
-                    STAC_LINKS_KEY: [
-                        {
-                            STAC_HREF_KEY: collection_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_CHILD,
-                        },
-                        {
-                            STAC_HREF_KEY: catalog_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_ROOT,
-                        },
-                        {
-                            STAC_HREF_KEY: catalog_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_SELF,
-                        },
-                    ],
-                } == load(imported_catalog_file)
+                catalog_json = load(imported_catalog_file)
 
-            # Collection contents
+                with subtests.test(msg="catalog title"):
+                    assert catalog_json[STAC_TITLE_KEY] == catalog_title
+
+                with subtests.test(msg="catalog links"):
+                    assert catalog_json[STAC_LINKS_KEY] == expected_catalog_links
+
+            expected_collection_links = [
+                {
+                    STAC_HREF_KEY: f"./{item_metadata_filename}",
+                    STAC_REL_KEY: STAC_REL_ITEM,
+                },
+                {
+                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                    STAC_REL_KEY: STAC_REL_ROOT,
+                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+                {
+                    STAC_REL_KEY: STAC_REL_PARENT,
+                    STAC_HREF_KEY: f"./{catalog_metadata_filename}",
+                    STAC_TITLE_KEY: catalog_title,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+            ]
+
             imported_collection_key = f"{dataset.dataset_prefix}/{collection_metadata_filename}"
-            with subtests.test(msg="Imported collection has relative keys"), smart_open.open(
-                f"{storage_bucket_prefix}{imported_collection_key}", mode="rb"
+            with smart_open.open(
+                f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+                f"{imported_collection_key}",
+                mode="rb",
             ) as imported_collection_file:
-                assert {
-                    **deepcopy(MINIMAL_VALID_STAC_COLLECTION_OBJECT),
-                    STAC_ASSETS_KEY: {
+                collection_json = load(imported_collection_file)
+
+                with subtests.test(msg="collection title"):
+                    assert collection_json[STAC_TITLE_KEY] == collection_title
+
+                with subtests.test(msg="collection links"):
+                    assert collection_json[STAC_LINKS_KEY] == expected_collection_links
+
+                with subtests.test(msg="collection assets"):
+                    assert collection_json[STAC_ASSETS_KEY] == {
                         second_asset_name: {
                             LINZ_STAC_CREATED_KEY: second_asset_created,
                             LINZ_STAC_UPDATED_KEY: second_asset_updated,
-                            STAC_HREF_KEY: second_asset_filename,
+                            STAC_HREF_KEY: f"./{second_asset_filename}",
                             STAC_FILE_CHECKSUM_KEY: second_asset_hex_digest,
-                        },
-                    },
-                    STAC_LINKS_KEY: [
-                        {
-                            STAC_HREF_KEY: item_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_CHILD,
-                        },
-                        {
-                            STAC_HREF_KEY: catalog_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_ROOT,
-                        },
-                        {
-                            STAC_HREF_KEY: collection_metadata_filename,
-                            STAC_REL_KEY: STAC_REL_SELF,
-                        },
-                    ],
-                } == load(imported_collection_file)
+                        }
+                    }
 
-            # Item contents
+            expected_item_links = [
+                {
+                    STAC_HREF_KEY: f"../{CATALOG_FILENAME}",
+                    STAC_REL_KEY: STAC_REL_ROOT,
+                    STAC_TITLE_KEY: ROOT_CATALOG_TITLE,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+                {
+                    STAC_HREF_KEY: f"./{collection_metadata_filename}",
+                    STAC_REL_KEY: STAC_REL_PARENT,
+                    STAC_TITLE_KEY: collection_title,
+                    STAC_TYPE_KEY: STAC_MEDIA_TYPE_JSON,
+                },
+            ]
+
             imported_item_key = f"{dataset.dataset_prefix}/{item_metadata_filename}"
-            with subtests.test(msg="Imported item has relative keys"), smart_open.open(
-                f"{storage_bucket_prefix}{imported_item_key}", mode="rb"
+            with smart_open.open(
+                f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
+                f"{imported_item_key}",
+                mode="rb",
             ) as imported_item_file:
-                assert {
-                    **deepcopy(MINIMAL_VALID_STAC_ITEM_OBJECT),
-                    STAC_ASSETS_KEY: {
+                item_json = load(imported_item_file)
+
+                with subtests.test(msg="item links"):
+                    assert item_json[STAC_LINKS_KEY] == expected_item_links
+
+                with subtests.test(msg="item assets"):
+                    assert item_json[STAC_ASSETS_KEY] == {
                         first_asset_name: {
                             LINZ_STAC_CREATED_KEY: first_asset_created,
                             LINZ_STAC_UPDATED_KEY: first_asset_updated,
-                            STAC_HREF_KEY: first_asset_filename,
+                            STAC_HREF_KEY: f"./{first_asset_filename}",
                             STAC_FILE_CHECKSUM_KEY: first_asset_hex_digest,
-                        },
-                    },
-                    STAC_LINKS_KEY: [
-                        {STAC_HREF_KEY: catalog_metadata_filename, STAC_REL_KEY: STAC_REL_ROOT},
-                        {STAC_HREF_KEY: item_metadata_filename, STAC_REL_KEY: STAC_REL_SELF},
-                    ],
-                } == load(imported_item_file)
+                        }
+                    }
+
+            storage_bucket_prefix = f"{S3_URL_PREFIX}{Resource.STORAGE_BUCKET_NAME.resource_name}/"
 
             # First asset contents
             imported_first_asset_key = f"{dataset.dataset_prefix}/{first_asset_filename}"
@@ -352,7 +405,6 @@ def should_successfully_run_dataset_version_creation_process_with_multiple_asset
                 assert second_asset_contents == imported_second_asset_file.read()
         finally:
             # Cleanup
-            wait_for_s3_key(Resource.STORAGE_BUCKET_NAME.resource_name, CATALOG_FILENAME, s3_client)
 
             for key in [
                 imported_catalog_key,
